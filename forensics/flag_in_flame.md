@@ -10,3 +10,5 @@ At the bottom of the image there is a long hex string:
 
 
 <img width="1366" height="433" alt="image" src="https://github.com/user-attachments/assets/bc7f6d66-7fa4-4394-bde0-cfcbc3fc6a49" />
+
+ we just did base64 decode mv the file and crack the hash
