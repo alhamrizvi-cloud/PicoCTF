@@ -1,2 +1,1 @@
-# PicoCTF
-idk
+i got you :)
