@@ -1,5 +1,5 @@
 
-### Solution
+### milkslap
 
 First, I opened the website, the **.png file looked like a GIF animation**. It showed a cursor, and when you moved it, it slapped milk on the person. I spent around **6 minutes interacting with it**, thinking it might be part of the challenge.
 
