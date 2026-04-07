@@ -1,7 +1,5 @@
 
 
-#### Description
-
 We are given access to a custom Git server:
 
 ```bash
