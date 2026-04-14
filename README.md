@@ -8,7 +8,9 @@ Hey everyone,
 
 This repository contains my **picoCTF writeups**, and I’m actively working on it daily as I solve new challenges.
 
-
+<p align="center">
+  <img src="https://media.tenor.com/YdmFHfZY25kAAAAM/dexter-superman.gif" />
+</p>
 ## About This Repo
 
 * I regularly upload writeups for the challenges I solve.
