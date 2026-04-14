@@ -82,3 +82,4 @@ flag  = decoded[start:end]
 print(f"[+] FLAG: {flag}")
 
 ```
+Run this script and you will get the flag 
