@@ -1,0 +1,207 @@
+
+# PicoCTF 2026 — JITFP 
+
+At first glance, the binary `ad7e550b` looks like a normal flag checker.
+
+But two things stand out:
+
+* It uses `sleep` → timing attack bait
+* It calls functions using a pointer (`call rdx`)
+
+This means:
+
+👉 The real logic is decided **at runtime (JIT-style)**
+👉 Static reversing = useless
+
+## 🧪 What’s actually happening
+
+Inside the binary:
+
+* There are many tiny functions like:
+
+```c
+if (char == 'a') return 1;
+if (char == 'b') return 1;
+```
+
+* A function pointer table decides **which checker runs for each position**
+* That table is stored in `.bss` → empty initially
+* It gets filled **only when the program runs**
+
+---
+
+## ❌ Why timing fails
+
+* Every run has fixed `sleep`
+* Wrong and correct inputs take same time
+* Server disconnects → brute force too slow
+
+👉 So timing attack = dead end
+
+We attach to the running process and watch:
+
+```asm
+call rdx
+```
+
+👉 `rdx` holds the address of the checker
+👉 Each checker corresponds to a **specific character**
+
+So if we map:
+
+```text
+function address → character
+```
+
+We can reconstruct the flag directly.
+
+---
+
+## ⚙️ Exploit strategy
+
+1. Run binary with dummy input (`AAAA...`)
+2. Attach using `ptrace`
+3. Scan memory to map:
+
+   ```
+   cmpb $0x61 → 'a'
+   cmpb $0x62 → 'b'
+   ```
+4. Set breakpoint before `call rdx`
+5. Each time it hits:
+
+   * Read `rdx`
+   * Convert to character
+6. Collect all characters → FLAG
+
+---
+
+## 🧩 Solve Script
+
+Run this **locally OR via base64 on remote**:
+
+```python
+import os, ctypes, subprocess
+
+FLAGLEN = 33
+
+p = subprocess.Popen(['./ad7e550b', 'A'*FLAGLEN],
+                     stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
+pid = p.pid
+
+maps = open(f'/proc/{pid}/maps').read().splitlines()
+base = int([l for l in maps if 'ad7e550b' in l and '00000000' in l][0].split('-',1)[0],16)
+
+libc = ctypes.CDLL('libc.so.6', use_errno=True)
+
+PTRACE_ATTACH=16
+PTRACE_CONT=7
+PTRACE_GETREGS=12
+PTRACE_SETREGS=13
+PTRACE_SINGLESTEP=9
+
+class regs(ctypes.Structure):
+    _fields_ = [
+        ('r15',ctypes.c_ulonglong),('r14',ctypes.c_ulonglong),
+        ('r13',ctypes.c_ulonglong),('r12',ctypes.c_ulonglong),
+        ('rbp',ctypes.c_ulonglong),('rbx',ctypes.c_ulonglong),
+        ('r11',ctypes.c_ulonglong),('r10',ctypes.c_ulonglong),
+        ('r9',ctypes.c_ulonglong),('r8',ctypes.c_ulonglong),
+        ('rax',ctypes.c_ulonglong),('rcx',ctypes.c_ulonglong),
+        ('rdx',ctypes.c_ulonglong),('rsi',ctypes.c_ulonglong),
+        ('rdi',ctypes.c_ulonglong),('orig_rax',ctypes.c_ulonglong),
+        ('rip',ctypes.c_ulonglong),('cs',ctypes.c_ulonglong),
+        ('eflags',ctypes.c_ulonglong),('rsp',ctypes.c_ulonglong),
+        ('ss',ctypes.c_ulonglong),('fs_base',ctypes.c_ulonglong),
+        ('gs_base',ctypes.c_ulonglong),('ds',ctypes.c_ulonglong),
+        ('es',ctypes.c_ulonglong),('fs',ctypes.c_ulonglong),
+        ('gs',ctypes.c_ulonglong)
+    ]
+
+def ptrace(req, pid, addr=0, data=0):
+    res = libc.ptrace(req, pid, ctypes.c_void_p(addr), ctypes.c_void_p(data))
+    if res == -1 and ctypes.get_errno():
+        raise OSError(ctypes.get_errno())
+    return res
+
+def wait():
+    os.waitpid(pid, 0)
+
+def read_mem(addr, n):
+    with open(f'/proc/{pid}/mem','rb',0) as f:
+        f.seek(addr)
+        return f.read(n)
+
+def write_mem(addr, data):
+    with open(f'/proc/{pid}/mem','r+b',0) as f:
+        f.seek(addr)
+        f.write(data)
+
+# attach
+ptrace(PTRACE_ATTACH, pid, 0, 0)
+wait()
+
+# build addr → char map
+code = read_mem(base+0x1000, 0x1000)
+addr_to_char = {}
+
+for i in range(len(code)-4):
+    if code[i:i+3] == b'\x80\x7d\xfc':
+        imm = code[i+3]
+        j = i-1
+        while j >= 0 and i-j <= 32 and code[j] != 0x55:
+            j -= 1
+        if j >= 0 and code[j] == 0x55:
+            addr_to_char[0x1000 + j] = chr(imm)
+
+# breakpoint before call rdx
+bp = base + 0x1a7d
+orig = read_mem(bp,1)
+write_mem(bp, b'\xCC')
+
+ptrace(PTRACE_CONT, pid, 0, 0)
+
+flag = []
+
+for _ in range(FLAGLEN):
+    wait()
+    r = regs()
+    ptrace(PTRACE_GETREGS, pid, 0, ctypes.addressof(r))
+
+    flag.append(addr_to_char.get(r.rdx - base, '?'))
+
+    write_mem(bp, orig)
+    r.rip = bp
+    ptrace(PTRACE_SETREGS, pid, 0, ctypes.addressof(r))
+
+    ptrace(PTRACE_SINGLESTEP, pid, 0, 0)
+    wait()
+
+    write_mem(bp, b'\xCC')
+    ptrace(PTRACE_CONT, pid, 0, 0)
+
+print(''.join(flag))
+```
+
+---
+
+## 🚀 Remote execution (no file write)
+
+```bash
+base64 -w0 solve.py
+```
+
+Then:
+
+```bash
+python3 -c "import base64;exec(base64.b64decode('PASTE').decode())"
+```
+
+---
+
+## 🏁 Result
+
+```text
+picoCTF{REDACTED}
+```
